@@ -197,8 +197,8 @@ impl Index {
         let Some(mid) = &rec.message_id else { return Ok(false) };
         Ok(self.conn
             .query_row(
-                "SELECT 1 FROM messages WHERE folder_id = ?1 AND message_id = ?2 AND date IS ?3 AND size = ?4 LIMIT 1",
-                params![folder_id, mid, rec.date, rec.size],
+                "SELECT 1 FROM messages WHERE folder_id = ?1 AND message_id = ?2 AND size = ?3 LIMIT 1",
+                params![folder_id, mid, rec.size],
                 |_| Ok(()),
             )
             .optional()?
@@ -464,6 +464,8 @@ mod tests {
         idx.commit_batch(f.id, &[r1.clone()], None).unwrap();
         let again = rec("INBOX/2-00001.eml", "s", "Mon, 6 Oct 2026 10:00:00 +0000", "1@x");
         assert!(idx.has_duplicate(f.id, &again).unwrap());
+        let other_date = MessageRecord { date: Some(1), ..again.clone() };
+        assert!(idx.has_duplicate(f.id, &other_date).unwrap());
         let no_id = MessageRecord { message_id: None, ..again };
         assert!(!idx.has_duplicate(f.id, &no_id).unwrap());
     }

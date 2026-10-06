@@ -21,14 +21,13 @@ fn msg(i: usize) -> String {
     format!("From: a{i}@x.com\r\nTo: t@x.com\r\nSubject: Teste {i}\r\nMessage-ID: <m{i}@x>\r\nDate: Mon, 6 Oct 2026 10:00:00 +0000\r\n\r\nCorpo {i}\r\n")
 }
 
-// INTERNALDATE fixo: sem ele o GreenMail usa a hora do APPEND e a deduplicação por (Message-ID, data, tamanho) não casa após recriar a pasta.
 async fn seed(user: &str, folder: &str, range: std::ops::Range<usize>) {
     let mut s = plain(user).await.unwrap();
     if folder != "INBOX" {
         let _ = s.create(folder).await;
     }
     for i in range {
-        s.append(folder, None, Some("\"06-Oct-2026 10:00:00 +0000\""), msg(i)).await.unwrap();
+        s.append(folder, None, None, msg(i)).await.unwrap();
     }
     s.logout().await.unwrap();
 }

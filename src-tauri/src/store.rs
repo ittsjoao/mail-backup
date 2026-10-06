@@ -58,7 +58,7 @@ pub fn is_safe_rel(rel: &str) -> bool {
         && !rel.starts_with('/')
         && !rel.contains('\\')
         && !rel.contains(':')
-        && rel.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+        && rel.split('/').all(|c| !c.is_empty() && c != "." && c != ".." && c == sanitize_component(c))
 }
 
 pub fn join_rel(root: &Path, rel: &str) -> PathBuf {
@@ -163,7 +163,12 @@ mod tests {
     #[test]
     fn safe_rel_rules() {
         assert!(is_safe_rel("INBOX/1-00001.eml"));
-        for bad in ["", "../x", "a/../b", "/abs", "C:/x", "a\\b", "a//b", "./a"] {
+        assert!(is_safe_rel("a@b.com~2/mail/Itens Enviados/Ação/7-00002.eml"));
+        assert!(is_safe_rel("a@b.com/account.json"));
+        for bad in [
+            "", "../x", "a/../b", "/abs", "C:/x", "a\\b", "a//b", "./a", ".. /x", "a/.../b", "a/x.",
+            "a/CON", "a/nul.eml", "a\u{0}b",
+        ] {
             assert!(!is_safe_rel(bad), "{bad} deveria ser inseguro");
         }
     }
@@ -176,6 +181,29 @@ mod tests {
         std::fs::write(tmp.path().join("fora.eml"), b"y").unwrap();
         assert!(resolve(&root, "INBOX/1-00001.eml").is_ok());
         assert!(matches!(resolve(&root, "../fora.eml"), Err(AppError::UnsafePath(_))));
+    }
+
+    #[test]
+    fn resolve_rejects_junction_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("mail");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("f.eml"), b"y").unwrap();
+        let link = root.join("link");
+        let ok = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("junction nao criada; teste ignorado");
+            return;
+        }
+        assert!(matches!(resolve(&root, "link/f.eml"), Err(AppError::UnsafePath(_))));
     }
 
     #[test]

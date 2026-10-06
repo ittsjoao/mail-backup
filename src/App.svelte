@@ -1,5 +1,6 @@
 <script>
   import Accounts from './lib/Accounts.svelte'
+  import Browser from './lib/Browser.svelte'
 
   let account = $state(null)
 </script>
@@ -10,7 +11,7 @@
 </header>
 
 {#if account}
-  <p>Navegador (Task 9)</p>
+  <Browser {account} />
 {:else}
   <Accounts onbrowse={(a) => (account = a)} />
 {/if}

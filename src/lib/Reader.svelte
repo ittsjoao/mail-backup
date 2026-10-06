@@ -4,16 +4,23 @@
   let { accountId, messageId } = $props()
   let view = $state(null)
   let remote = $state(false)
+  let ids = $state(null)
   let error = $state('')
+  let gen = 0
 
   async function load(a, m, allowRemote) {
+    const g = ++gen
     error = ''
-    try { view = await api.getMessage(a, m, allowRemote) } catch (e) { error = errMsg(e); view = null }
+    try {
+      const v = await api.getMessage(a, m, allowRemote)
+      if (g === gen) { view = v; ids = { a, m } }
+    } catch (e) { if (g === gen) { error = errMsg(e); view = null } }
   }
 
   $effect(() => {
     const a = accountId, m = messageId
     remote = false
+    view = null
     load(a, m, false)
   })
 
@@ -32,17 +39,17 @@
       <div><small>{fmtDate(view.date)}</small></div>
       <div class="inline">
         {#if view.has_remote_images && !remote}
-          <button onclick={() => { remote = true; load(accountId, messageId, true) }}>Carregar imagens</button>
+          <button onclick={() => { remote = true; load(ids.a, ids.m, true) }}>Carregar imagens</button>
         {/if}
-        <button onclick={() => act(api.openEml(accountId, messageId))}>Abrir no programa de e-mail</button>
+        <button onclick={() => act(api.openEml(ids.a, ids.m))}>Abrir no programa de e-mail</button>
       </div>
       {#if view.attachments.length}
         <ul class="att">
           {#each view.attachments as a (a.index)}
             <li>
               {a.name} <small>({kb(a.size)})</small>
-              <button onclick={() => act(api.saveAttachment(accountId, messageId, a.index))}>Salvar como…</button>
-              {#if !a.blocked}<button onclick={() => act(api.openAttachment(accountId, messageId, a.index))}>Abrir</button>{/if}
+              <button onclick={() => act(api.saveAttachment(ids.a, ids.m, a.index))}>Salvar como…</button>
+              {#if !a.blocked}<button onclick={() => act(api.openAttachment(ids.a, ids.m, a.index))}>Abrir</button>{/if}
             </li>
           {/each}
         </ul>

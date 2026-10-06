@@ -12,6 +12,7 @@
   let to = $state('')
   let selectedId = $state(null)
   let error = $state('')
+  let refresh = $state(0)
   let timer
 
   $effect(() => {
@@ -28,7 +29,7 @@
 
   async function reindex() {
     error = ''
-    try { await api.reindex(account.id); await loadFolders(); folderId = null; selectedId = null } catch (e) { error = errMsg(e) }
+    try { await api.reindex(account.id); await loadFolders(); folderId = null; selectedId = null; refresh++ } catch (e) { error = errMsg(e) }
   }
 
   // datas locais do <input type="date">; "até" inclui o dia inteiro
@@ -53,7 +54,7 @@
     <input class="search" placeholder="Buscar remetente ou assunto…" bind:value={search} />
     <div class="dates"><label>De <input type="date" bind:value={from} /></label><label>Até <input type="date" bind:value={to} /></label></div>
     <div class="listwrap">
-      <MessageList accountId={account.id} {folderId} {text} dateFrom={ts(from)} dateTo={ts(to, 1)} {selectedId} onselect={(id) => (selectedId = id)} />
+      {#key refresh}<MessageList accountId={account.id} {folderId} {text} dateFrom={ts(from)} dateTo={ts(to, 1)} {selectedId} onselect={(id) => (selectedId = id)} />{/key}
     </div>
   </section>
   <main>

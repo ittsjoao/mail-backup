@@ -52,17 +52,21 @@ fn net(e: impl std::fmt::Display) -> AppError {
     AppError::Network(e.to_string())
 }
 
+/// Limita a espera por qualquer resposta do servidor; sem isso um servidor mudo trava o backup e o cancelamento.
+pub async fn timed<F: Future>(f: F) -> Result<F::Output> {
+    tokio::time::timeout(READ_TIMEOUT, f).await.map_err(|_| net("tempo esgotado aguardando o servidor"))
+}
+
 pub async fn login<T>(stream: T, user: &str, pass: &str) -> Result<Session<T>>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
     let mut client = Client::new(stream);
-    client
-        .read_response()
-        .await
+    timed(client.read_response())
+        .await?
         .map_err(net)?
         .ok_or_else(|| net("o servidor fechou a conexão antes da saudação"))?;
-    client.login(user, pass).await.map_err(|(e, _)| match e {
+    timed(client.login(user, pass)).await?.map_err(|(e, _)| match e {
         async_imap::error::Error::No(_) | async_imap::error::Error::Bad(_) => AppError::AuthFailed,
         other => net(other),
     })
@@ -82,9 +86,8 @@ pub async fn connect_tls(host: &str, port: u16, user: &str, pass: &str) -> Resul
         .map_err(|_| net("tempo esgotado ao conectar"))?
         .map_err(net)?;
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| AppError::Tls(e.to_string()))?;
-    let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
-        .connect(name, tcp)
-        .await
+    let stream = timed(tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, tcp))
+        .await?
         .map_err(|e| AppError::Tls(e.to_string()))?;
     login(stream, user, pass).await
 }
@@ -93,7 +96,8 @@ async fn list_folders<T>(s: &mut Session<T>) -> Result<Vec<RemoteFolder>>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
-    let names: Vec<async_imap::types::Name> = s.list(Some(""), Some("*")).await.map_err(net)?.try_collect().await.map_err(net)?;
+    let names: Vec<async_imap::types::Name> =
+        timed(async { s.list(Some(""), Some("*")).await?.try_collect().await }).await?.map_err(net)?;
     // conexão morta pode devolver LIST vazio em vez de erro; um servidor IMAP sempre tem INBOX
     if names.is_empty() {
         return Err(net("lista de pastas vazia (conexão encerrada?)"));
@@ -118,7 +122,7 @@ where
     if !store::is_safe_rel(&folder.path) {
         return Err(AppError::UnsafePath(folder.path));
     }
-    let mailbox = s.examine(&remote.name).await.map_err(net)?;
+    let mailbox = timed(s.examine(&remote.name)).await?.map_err(net)?;
     let uidvalidity = mailbox.uid_validity.unwrap_or(0);
     if folder.uidvalidity != Some(uidvalidity) {
         index.reset_folder(folder.id, uidvalidity)?;
@@ -134,14 +138,11 @@ where
         (ctx.progress)(Progress { account_id: ctx.account_id.to_string(), folder: folder.path.clone(), done, total })
     };
 
-    let mut stream = s.uid_fetch(format!("{}:*", folder.last_uid + 1), FETCH_QUERY).await.map_err(net)?;
+    let mut stream = timed(s.uid_fetch(format!("{}:*", folder.last_uid + 1), FETCH_QUERY)).await?.map_err(net)?;
     let mut batch = Vec::with_capacity(BATCH as usize);
     let (mut last_uid, mut done, mut saved) = (folder.last_uid, 0u32, 0u64);
     loop {
-        let next = tokio::time::timeout(READ_TIMEOUT, stream.try_next())
-            .await
-            .map_err(|_| net("tempo esgotado aguardando o servidor"))?
-            .map_err(net)?;
+        let next = timed(stream.try_next()).await?.map_err(net)?;
         let Some(fetch) = next else { break };
         let Some(uid) = fetch.uid else { continue };
         if uid <= folder.last_uid {
@@ -223,7 +224,7 @@ where
         report.cancelled = true;
         return Ok(report);
     }
-    let _ = session.logout().await;
+    let _ = timed(session.logout()).await;
     Ok(report)
 }
 

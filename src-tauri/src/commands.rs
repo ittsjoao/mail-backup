@@ -176,7 +176,7 @@ pub async fn delete_account(state: State<'_, AppState>, id: String, delete_files
 pub async fn test_connection(input: AccountInput) -> Result<()> {
     let pw = password_for(&input)?;
     let mut s = imap_sync::connect_tls(&input.host, input.port, &input.username, &pw).await?;
-    let _ = s.logout().await;
+    let _ = imap_sync::timed(s.logout()).await;
     Ok(())
 }
 

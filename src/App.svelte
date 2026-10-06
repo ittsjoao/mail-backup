@@ -10,11 +10,9 @@
   {#if account}<button onclick={() => (account = null)}>← Contas</button> <span>{account.name}</span>{/if}
 </header>
 
-{#if account}
-  <Browser {account} />
-{:else}
-  <Accounts onbrowse={(a) => (account = a)} />
-{/if}
+<!-- Contas fica montada (só oculta) para não perder o estado de um backup em andamento -->
+<div hidden={!!account}><Accounts onbrowse={(a) => (account = a)} /></div>
+{#if account}<Browser {account} />{/if}
 
 <style>
   :global(body) { margin: 0; font: 14px system-ui, sans-serif; color: #1d1d1f; background: #fafafa; }

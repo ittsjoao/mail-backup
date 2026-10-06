@@ -18,7 +18,10 @@
   const input = () => ({ ...form, port: Number(form.port), password: form.password || null })
 
   async function refresh() {
-    try { accounts = await api.listAccounts() } catch (e) { error = errMsg(e) }
+    try {
+      accounts = await api.listAccounts()
+      selected = selected.filter((id) => accounts.some((a) => a.id === id))
+    } catch (e) { error = errMsg(e) }
   }
   refresh()
 

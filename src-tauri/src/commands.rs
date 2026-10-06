@@ -79,6 +79,17 @@ fn message_path(acc: &Account, message_id: i64) -> Result<PathBuf> {
     store::resolve(&acc.dir.join("mail"), &rel)
 }
 
+fn norm(p: &Path) -> PathBuf {
+    let p = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if cfg!(windows) { PathBuf::from(p.to_string_lossy().to_lowercase()) } else { p }
+}
+
+/// true se as pastas são iguais ou uma contém a outra
+fn dirs_overlap(a: &Path, b: &Path) -> bool {
+    let (a, b) = (norm(a), norm(b));
+    a.starts_with(&b) || b.starts_with(&a)
+}
+
 fn password_for(input: &AccountInput) -> Result<String> {
     match (&input.password, &input.id) {
         (Some(p), _) if !p.is_empty() => Ok(p.clone()),
@@ -105,7 +116,19 @@ pub async fn save_account(state: State<'_, AppState>, input: AccountInput) -> Re
             return Ok(a.clone());
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let dir = input.dir.as_ref().map(PathBuf::from).unwrap_or_else(|| state.data_dir.join("accounts").join(&id));
+        let dir = match input.dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+            Some(d) => {
+                let d = PathBuf::from(d);
+                if !d.is_absolute() {
+                    return Err(other("pasta do backup inválida"));
+                }
+                if c.accounts.iter().any(|a| dirs_overlap(&a.dir, &d)) {
+                    return Err(other("a pasta escolhida se sobrepõe à pasta de outra conta"));
+                }
+                d
+            }
+            None => state.data_dir.join("accounts").join(&id),
+        };
         let a = Account {
             id, name: input.name.clone(), email: input.email.clone(), host: input.host.clone(), port: input.port,
             username: input.username.clone(), dir, has_credentials: false, last_run: None,
@@ -134,7 +157,8 @@ pub async fn delete_account(state: State<'_, AppState>, id: String, delete_files
         Ok(())
     })?;
     config::delete_password(&id)?;
-    if delete_files {
+    let shared = state.config.lock().unwrap().accounts.iter().any(|a| dirs_overlap(&a.dir, &acc.dir));
+    if delete_files && !shared {
         // só apaga o que o app criou; a pasta pode ter sido escolhida pelo usuário
         let mail = acc.dir.join("mail");
         if mail.exists() {
@@ -343,4 +367,19 @@ pub async fn import_archive(state: State<'_, AppState>, path: String, password: 
         added.push(acc);
     }
     Ok(added)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlap_cases() {
+        let p = Path::new;
+        assert!(dirs_overlap(p("C:/a/b"), p("C:/a/b")));
+        assert!(dirs_overlap(p("C:/a"), p("C:/a/b")));
+        assert!(dirs_overlap(p("C:/a/b"), p("C:/a")));
+        assert!(!dirs_overlap(p("C:/a/b"), p("C:/a/bc")));
+        assert_eq!(dirs_overlap(p("C:/A/B"), p("C:/a/b")), cfg!(windows));
+    }
 }

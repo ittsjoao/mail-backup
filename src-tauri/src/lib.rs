@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod imap_sync;
 pub mod index;
 pub mod store;
 

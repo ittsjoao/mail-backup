@@ -115,6 +115,9 @@ where
 {
     let candidate = store::folder_rel_path(&remote.name, remote.delimiter.as_deref());
     let mut folder = index.folder_for_remote(&remote.name, &candidate)?;
+    if !store::is_safe_rel(&folder.path) {
+        return Err(AppError::UnsafePath(folder.path));
+    }
     let mailbox = s.examine(&remote.name).await.map_err(net)?;
     let uidvalidity = mailbox.uid_validity.unwrap_or(0);
     if folder.uidvalidity != Some(uidvalidity) {

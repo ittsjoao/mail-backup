@@ -232,7 +232,8 @@ impl Index {
     }
 
     pub fn restore_folders(&self, folders: &[FolderState]) -> Result<()> {
-        for f in folders {
+        // manifesto vem de um zip importado: caminho inseguro levaria a escrita para fora de <dir>/mail
+        for f in folders.iter().filter(|f| store::is_safe_rel(&f.path)) {
             self.conn.execute(
                 "INSERT OR IGNORE INTO folders (imap_name, path, uidvalidity, last_uid) VALUES (?1, ?2, ?3, ?4)",
                 params![f.imap_name, f.path, f.uidvalidity, f.last_uid],
@@ -415,6 +416,16 @@ mod tests {
         let inbox = idx.folder_for_remote("INBOX", "INBOX").unwrap();
         assert_eq!(inbox.path, "INBOX");
         assert_eq!(inbox.imap_name.as_deref(), Some("INBOX"));
+    }
+
+    #[test]
+    fn restore_folders_skips_unsafe_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (idx, _) = Index::open(&tmp.path().join("i.sqlite")).unwrap();
+        let f = |path: &str| FolderState { id: 0, imap_name: Some(path.into()), path: path.into(), uidvalidity: None, last_uid: 0 };
+        idx.restore_folders(&[f("../x"), f("C:/x"), f("a/../b"), f("INBOX/Sub")]).unwrap();
+        let paths: Vec<String> = idx.folders_state().unwrap().into_iter().map(|f| f.path).collect();
+        assert_eq!(paths, vec!["INBOX/Sub"]);
     }
 
     #[test]

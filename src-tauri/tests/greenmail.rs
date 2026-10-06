@@ -1,11 +1,14 @@
-//! Requer GreenMail em 127.0.0.1:3143 (ver Task 4, Step 1). Rodar com:
+//! Requer GreenMail em 127.0.0.1:3143 (IMAP) e a API HTTP em 127.0.0.1:8080 (usada pelo helper de reset):
+//! java -Dgreenmail.setup.test.imap -Dgreenmail.hostname=127.0.0.1 -Dgreenmail.auth.disabled -jar tools/greenmail.jar
+//! Rodar com:
 //! cargo test --test greenmail -- --ignored --test-threads=1
 use futures::TryStreamExt;
 use mail_backup_lib::error::{AppError, Result};
 use mail_backup_lib::imap_sync::{self, Progress, SyncCtx, SyncReport};
 use mail_backup_lib::index::{Index, Query};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::net::TcpStream;
 
 async fn plain(user: &str) -> Result<async_imap::Session<TcpStream>> {
@@ -33,12 +36,21 @@ async fn seed(user: &str, folder: &str, range: std::ops::Range<usize>) {
 }
 
 async fn run(user: &str, dir: &Path, cancel_after_first_batch: bool) -> (SyncReport, Index) {
+    let (report, index) = run_with(|| plain(user), dir, cancel_after_first_batch).await;
+    (report.unwrap(), index)
+}
+
+async fn run_with<C, F>(connect: C, dir: &Path, cancel_after_first_batch: bool) -> (Result<SyncReport>, Index)
+where
+    C: FnMut() -> F,
+    F: Future<Output = Result<async_imap::Session<TcpStream>>>,
+{
     let (mut index, _) = Index::open(&dir.join("index.sqlite")).unwrap();
     let cancel = AtomicBool::new(false);
     let progress = |_: Progress| if cancel_after_first_batch { cancel.store(true, Ordering::SeqCst) };
     let mail = dir.join("mail");
     let ctx = SyncCtx { account_id: "t", mail_root: &mail, cancel: &cancel, progress: &progress };
-    let report = imap_sync::sync_account(|| plain(user), &ctx, &mut index).await.unwrap();
+    let report = imap_sync::sync_account(connect, &ctx, &mut index).await;
     (report, index)
 }
 
@@ -135,4 +147,73 @@ async fn backup_never_marks_messages_as_seen() {
     for f in &fetches {
         assert!(!f.flags().any(|fl| matches!(fl, async_imap::types::Flag::Seen)));
     }
+}
+
+/// A primeira chamada devolve uma sessão já encerrada (qualquer comando falha); `later` decide as demais.
+fn dead_first<'a>(
+    calls: &'a AtomicUsize,
+    user: &'a str,
+    later_ok: bool,
+) -> impl FnMut() -> std::pin::Pin<Box<dyn Future<Output = Result<async_imap::Session<TcpStream>>> + 'a>> + 'a {
+    move || {
+        let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+        Box::pin(async move {
+            if first {
+                let mut s = plain(user).await?;
+                s.logout().await.unwrap();
+                Ok(s)
+            } else if later_ok {
+                plain(user).await
+            } else {
+                Err(AppError::Network("servidor inacessível".into()))
+            }
+        })
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn reconnects_after_dead_session() {
+    let u = user("dead");
+    let tmp = tempfile::tempdir().unwrap();
+    seed(&u, "INBOX", 0..5).await;
+    seed(&u, "Clientes", 0..3).await;
+    let calls = AtomicUsize::new(0);
+    let (r, index) = run_with(dead_first(&calls, &u, true), tmp.path(), false).await;
+    let r = r.unwrap();
+    assert!(calls.load(Ordering::SeqCst) >= 2, "a sessão morta não foi substituída");
+    assert!(r.failed_folders.is_empty());
+    assert_eq!(r.new_messages, 8);
+    assert_eq!(total(&index), 8);
+    assert_eq!(eml_count(tmp.path()), 8);
+}
+
+#[tokio::test]
+#[ignore]
+async fn account_fails_when_server_unreachable() {
+    let u = user("down");
+    let tmp = tempfile::tempdir().unwrap();
+    seed(&u, "INBOX", 0..2).await;
+    let calls = AtomicUsize::new(0);
+    let (r, _) = run_with(dead_first(&calls, &u, false), tmp.path(), false).await;
+    assert!(matches!(r, Err(AppError::Network(_))), "esperado Err(Network), veio {r:?}");
+}
+
+#[tokio::test]
+#[ignore]
+async fn uidvalidity_change_with_cancel_resumes_without_duplicates() {
+    let u = user("uvc");
+    let tmp = tempfile::tempdir().unwrap();
+    seed(&u, "Pasta", 0..250).await;
+    run(&u, tmp.path(), false).await;
+    let before = uid_validity(&u, "Pasta").await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    reset_greenmail().await;
+    seed(&u, "Pasta", 0..250).await;
+    assert_ne!(before, uid_validity(&u, "Pasta").await, "GreenMail não mudou o UIDVALIDITY; o teste não é válido");
+    let (r, _) = run(&u, tmp.path(), true).await;
+    assert!(r.cancelled);
+    let (r, index) = run(&u, tmp.path(), false).await;
+    assert_eq!(r.new_messages, 0);
+    assert_eq!(total(&index), 250);
 }

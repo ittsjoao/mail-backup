@@ -94,6 +94,10 @@ where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
     let names: Vec<async_imap::types::Name> = s.list(Some(""), Some("*")).await.map_err(net)?.try_collect().await.map_err(net)?;
+    // conexão morta pode devolver LIST vazio em vez de erro; um servidor IMAP sempre tem INBOX
+    if names.is_empty() {
+        return Err(net("lista de pastas vazia (conexão encerrada?)"));
+    }
     Ok(names
         .iter()
         .filter(|n| !n.attributes().iter().any(|a| matches!(a, NameAttribute::NoSelect)))
@@ -113,11 +117,12 @@ where
     let mut folder = index.folder_for_remote(&remote.name, &candidate)?;
     let mailbox = s.examine(&remote.name).await.map_err(net)?;
     let uidvalidity = mailbox.uid_validity.unwrap_or(0);
-    let dedupe = folder.uidvalidity.is_some_and(|v| v != uidvalidity);
     if folder.uidvalidity != Some(uidvalidity) {
         index.reset_folder(folder.id, uidvalidity)?;
         folder.last_uid = 0;
     }
+    // derivado do estado persistido: sobrevive a retry, cancelamento e queda no meio da pasta
+    let dedupe = index.has_messages_outside(folder.id, &format!("{}/{}-", folder.path, uidvalidity))?;
     if mailbox.exists == 0 || mailbox.uid_next.is_some_and(|next| next <= folder.last_uid + 1) {
         return Ok(0);
     }
@@ -175,11 +180,22 @@ where
     store::remove_tmp_files(ctx.mail_root)?;
     let mut report = SyncReport::default();
     let mut session = connect().await?;
-    let folders = list_folders(&mut session).await?;
+    let mut attempt = 0;
+    let folders = loop {
+        match list_folders(&mut session).await {
+            Ok(f) => break f,
+            Err(e) if e.is_retryable() && attempt < BACKOFF_SECS.len() => session = reconnect(&mut connect, &mut attempt).await?,
+            Err(e) => return Err(e),
+        }
+    };
+    let mut stale = false; // sessão suspeita após esgotar as tentativas de uma pasta
     for remote in &folders {
         if ctx.cancel.load(Ordering::SeqCst) {
             report.cancelled = true;
             return Ok(report); // sessão descartada sem LOGOUT: pode haver respostas pendentes
+        }
+        if std::mem::take(&mut stale) {
+            session = connect().await?;
         }
         let mut attempt = 0;
         loop {
@@ -189,16 +205,11 @@ where
                     break;
                 }
                 Err(e) if e.is_retryable() && attempt < BACKOFF_SECS.len() => {
-                    tokio::time::sleep(Duration::from_secs(BACKOFF_SECS[attempt])).await;
-                    attempt += 1;
-                    match connect().await {
-                        Ok(s) => session = s,
-                        Err(e) if e.is_retryable() => continue,
-                        Err(e) => return Err(e),
-                    }
+                    session = reconnect(&mut connect, &mut attempt).await?;
                 }
                 Err(e) if e.is_retryable() => {
                     report.failed_folders.push(store::folder_rel_path(&remote.name, remote.delimiter.as_deref()));
+                    stale = true;
                     break;
                 }
                 Err(e) => return Err(e),
@@ -211,4 +222,22 @@ where
     }
     let _ = session.logout().await;
     Ok(report)
+}
+
+/// Espera o backoff e reconecta; se todas as tentativas restantes falharem, devolve o erro (a conta inteira falha).
+async fn reconnect<T, C, F>(connect: &mut C, attempt: &mut usize) -> Result<Session<T>>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+    C: FnMut() -> F,
+    F: Future<Output = Result<Session<T>>>,
+{
+    loop {
+        tokio::time::sleep(Duration::from_secs(BACKOFF_SECS[*attempt])).await;
+        *attempt += 1;
+        match connect().await {
+            Ok(s) => return Ok(s),
+            Err(e) if e.is_retryable() && *attempt < BACKOFF_SECS.len() => continue,
+            Err(e) => return Err(e),
+        }
+    }
 }

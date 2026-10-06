@@ -193,6 +193,16 @@ impl Index {
         Ok(())
     }
 
+    /// Há mensagens da pasta cujo arquivo não começa com `prefix` (ex.: "INBOX/42-")? Usado para detectar
+    /// backups de um UIDVALIDITY anterior.
+    pub fn has_messages_outside(&self, folder_id: i64, prefix: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE folder_id = ?1 AND substr(file, 1, length(?2)) != ?2)",
+            params![folder_id, prefix],
+            |r| r.get(0),
+        )?)
+    }
+
     pub fn has_duplicate(&self, folder_id: i64, rec: &MessageRecord) -> Result<bool> {
         let Some(mid) = &rec.message_id else { return Ok(false) };
         Ok(self.conn
@@ -453,6 +463,19 @@ mod tests {
         assert_eq!(idx.list_messages(&q(None, Some("a_b"))).unwrap().total, 1);
         assert_eq!(idx.list_messages(&q(None, Some("JOAO@x"))).unwrap().total, 4);
         assert_eq!(idx.list_messages(&q(None, Some("  "))).unwrap().total, 4);
+    }
+
+    #[test]
+    fn has_messages_outside_detects_other_prefixes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut idx, _) = Index::open(&tmp.path().join("i.sqlite")).unwrap();
+        let f = idx.folder_for_remote("INBOX", "INBOX").unwrap();
+        assert!(!idx.has_messages_outside(f.id, "INBOX/2-").unwrap());
+        let r = rec("INBOX/2-00001.eml", "s", "Mon, 6 Oct 2026 10:00:00 +0000", "1@x");
+        idx.commit_batch(f.id, &[r], None).unwrap();
+        assert!(!idx.has_messages_outside(f.id, "INBOX/2-").unwrap());
+        assert!(idx.has_messages_outside(f.id, "INBOX/3-").unwrap());
+        assert!(idx.has_messages_outside(f.id, "INBOX/%-").unwrap()); // curinga LIKE tratado como literal
     }
 
     #[test]

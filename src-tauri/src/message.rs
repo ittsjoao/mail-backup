@@ -58,15 +58,17 @@ fn mime_of(part: &mail_parser::MessagePart) -> String {
         .unwrap_or_else(|| "application/octet-stream".into())
 }
 
-/// Troca `needle` (ASCII, minúsculo) por `with`, sem diferenciar maiúsculas.
-fn replace_ci(s: &str, needle: &str, with: &str) -> String {
+/// Prefixa `data-` ao atributo `name` (ASCII, minúsculo) sem diferenciar maiúsculas, aceitando espaços antes do `=`.
+fn disable_attr(s: &str, name: &str) -> String {
     let lower = s.to_ascii_lowercase(); // mesmo comprimento em bytes que `s`
     let mut out = String::with_capacity(s.len());
     let mut last = 0;
-    for (i, _) in lower.match_indices(needle) {
-        out.push_str(&s[last..i]);
-        out.push_str(with);
-        last = i + needle.len();
+    for (i, _) in lower.match_indices(name) {
+        if lower[i + name.len()..].trim_start().starts_with('=') {
+            out.push_str(&s[last..i]);
+            out.push_str("data-");
+            last = i;
+        }
     }
     out.push_str(&s[last..]);
     out
@@ -75,7 +77,7 @@ fn replace_ci(s: &str, needle: &str, with: &str) -> String {
 /// `<base target="_blank">` é só um padrão: `target=` e `<meta http-equiv="refresh">` do e-mail
 /// poderiam navegar o iframe do leitor para uma página remota.
 fn neutralize_navigation(body: &str) -> String {
-    replace_ci(&replace_ci(body, "target=", "data-target="), "http-equiv", "data-http-equiv")
+    disable_attr(&disable_attr(body, "target"), "http-equiv")
 }
 
 fn wrap(body: &str, allow_remote_images: bool) -> String {
@@ -167,10 +169,11 @@ mod tests {
 
     #[test]
     fn body_cannot_navigate_the_reader() {
-        let raw = "Subject: t\r\nContent-Type: text/html\r\n\r\n<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"><a TARGET=\"_self\" href=\"https://evil.example\">x</a>\r\n";
+        let raw = "Subject: t\r\nContent-Type: text/html\r\n\r\n<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"><a TARGET=\"_self\" href=\"https://evil.example\">x</a><a target =\"_self\" href=\"https://evil.example\">y</a>\r\n";
         let html = render(raw.as_bytes(), false).html;
         let lower = html.to_ascii_lowercase();
         assert!(!lower.contains(" target=\"_self\""), "{html}");
+        assert!(!lower.contains(" target =\"_self\""), "{html}");
         assert!(!lower.contains(" http-equiv=\"refresh\""), "{html}");
         assert!(lower.contains(" data-target=\"_self\"") && lower.contains(" data-http-equiv=\"refresh\""), "{html}");
         assert_eq!(html.matches("http-equiv=\"Content-Security-Policy\"").count(), 1);

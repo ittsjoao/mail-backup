@@ -2,7 +2,10 @@ use base64::Engine;
 use mail_parser::{Address, Message, MessageParser, MimeHeaders};
 use serde::Serialize;
 
-const BLOCKED: &[&str] = &["exe", "bat", "cmd", "com", "js", "jse", "vbs", "vbe", "wsf", "ps1", "msi", "scr", "lnk", "hta", "cpl", "jar"];
+const BLOCKED: &[&str] = &[
+    "exe", "bat", "cmd", "com", "js", "jse", "vbs", "vbe", "wsf", "ps1", "msi", "scr", "lnk", "hta", "cpl", "jar",
+    "url", "chm", "reg", "pif", "msc", "scf", "appref-ms", "settingcontent-ms", "msp", "vb", "ws", "iso", "img", "vhd", "vhdx",
+];
 
 #[derive(Debug, Serialize)]
 pub struct AttachmentInfo {
@@ -55,10 +58,30 @@ fn mime_of(part: &mail_parser::MessagePart) -> String {
         .unwrap_or_else(|| "application/octet-stream".into())
 }
 
+/// Troca `needle` (ASCII, minúsculo) por `with`, sem diferenciar maiúsculas.
+fn replace_ci(s: &str, needle: &str, with: &str) -> String {
+    let lower = s.to_ascii_lowercase(); // mesmo comprimento em bytes que `s`
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for (i, _) in lower.match_indices(needle) {
+        out.push_str(&s[last..i]);
+        out.push_str(with);
+        last = i + needle.len();
+    }
+    out.push_str(&s[last..]);
+    out
+}
+
+/// `<base target="_blank">` é só um padrão: `target=` e `<meta http-equiv="refresh">` do e-mail
+/// poderiam navegar o iframe do leitor para uma página remota.
+fn neutralize_navigation(body: &str) -> String {
+    replace_ci(&replace_ci(body, "target=", "data-target="), "http-equiv", "data-http-equiv")
+}
+
 fn wrap(body: &str, allow_remote_images: bool) -> String {
     let img = if allow_remote_images { "data: https:" } else { "data:" };
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {img}; style-src 'unsafe-inline'"><base target="_blank"><style>body{{font-family:system-ui,sans-serif;margin:12px;overflow-wrap:anywhere}}pre{{white-space:pre-wrap}}</style></head><body>{body}</body></html>"#
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="x-dns-prefetch-control" content="off"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {img}; style-src 'unsafe-inline'"><base target="_blank"><style>body{{font-family:system-ui,sans-serif;margin:12px;overflow-wrap:anywhere}}pre{{white-space:pre-wrap}}</style></head><body>{body}</body></html>"#
     )
 }
 
@@ -88,7 +111,7 @@ pub fn render(raw: &[u8], allow_remote_images: bool) -> MessageView {
     // body_html converte texto sem escapar '>', então só confiamos nele quando há parte HTML real.
     let has_html = m.html_body.iter().any(|&i| m.part(i).is_some_and(|p| p.is_text_html()));
     let body = if has_html {
-        m.body_html(0).map(|h| h.into_owned()).unwrap_or_default()
+        m.body_html(0).map(|h| neutralize_navigation(&h)).unwrap_or_default()
     } else {
         m.body_text(0).map(|t| format!("<pre>{}</pre>", escape(&t))).unwrap_or_default()
     };
@@ -143,6 +166,19 @@ mod tests {
     }
 
     #[test]
+    fn body_cannot_navigate_the_reader() {
+        let raw = "Subject: t\r\nContent-Type: text/html\r\n\r\n<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"><a TARGET=\"_self\" href=\"https://evil.example\">x</a>\r\n";
+        let html = render(raw.as_bytes(), false).html;
+        let lower = html.to_ascii_lowercase();
+        assert!(!lower.contains(" target=\"_self\""), "{html}");
+        assert!(!lower.contains(" http-equiv=\"refresh\""), "{html}");
+        assert!(lower.contains(" data-target=\"_self\"") && lower.contains(" data-http-equiv=\"refresh\""), "{html}");
+        assert_eq!(html.matches("http-equiv=\"Content-Security-Policy\"").count(), 1);
+        assert!(html.contains(r#"<base target="_blank">"#));
+        assert!(html.contains(r#"<meta http-equiv="x-dns-prefetch-control" content="off">"#));
+    }
+
+    #[test]
     fn attachments_listed_and_executables_blocked() {
         let v = render(HTML_MSG.as_bytes(), false);
         let names: Vec<(&str, bool)> = v.attachments.iter().map(|a| (a.name.as_str(), a.blocked)).collect();
@@ -171,7 +207,7 @@ mod tests {
 
     #[test]
     fn blocked_extensions() {
-        for name in ["a.exe", "b.EXE", "c.exe.", "d.ps1", "e.lnk", "f.js"] {
+        for name in ["a.exe", "b.EXE", "c.exe.", "d.ps1", "e.lnk", "f.js", "g.ISO", "h.url", "i.appref-ms", "j.vhdx"] {
             assert!(is_blocked(name), "{name}");
         }
         for name in ["a.pdf", "b.docx", "semextensao", "exe"] {

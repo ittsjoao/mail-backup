@@ -90,6 +90,20 @@ fn dirs_overlap(a: &Path, b: &Path) -> bool {
     a.starts_with(&b) || b.starts_with(&a)
 }
 
+/// Marca o arquivo como vindo da internet (Mark-of-the-Web): Office abre em Modo Protegido e o SmartScreen avisa.
+fn mark_from_internet(path: &Path) {
+    let mut ads = path.as_os_str().to_owned();
+    ads.push(":Zone.Identifier");
+    let _ = std::fs::write(PathBuf::from(ads), "[ZoneTransfer]\r\nZoneId=3\r\n"); // falha em volumes não-NTFS
+}
+
+fn ensure_idle(state: &AppState) -> Result<()> {
+    if state.running.load(Ordering::SeqCst) {
+        return Err(other("aguarde o backup terminar"));
+    }
+    Ok(())
+}
+
 fn password_for(input: &AccountInput) -> Result<String> {
     match (&input.password, &input.id) {
         (Some(p), _) if !p.is_empty() => Ok(p.clone()),
@@ -151,6 +165,7 @@ pub async fn save_account(state: State<'_, AppState>, input: AccountInput) -> Re
 
 #[tauri::command]
 pub async fn delete_account(state: State<'_, AppState>, id: String, delete_files: bool) -> Result<()> {
+    ensure_idle(&state)?;
     let acc = state.account(&id)?;
     state.update(|c| {
         c.accounts.retain(|a| a.id != id);
@@ -271,7 +286,9 @@ pub async fn save_attachment(app: AppHandle, state: State<'_, AppState>, account
     let Some(dest) = app.dialog().file().set_file_name(store::sanitize_component(&name)).blocking_save_file() else {
         return Ok(false);
     };
-    std::fs::write(dest.into_path().map_err(other)?, bytes)?;
+    let dest = dest.into_path().map_err(other)?;
+    std::fs::write(&dest, bytes)?;
+    mark_from_internet(&dest);
     Ok(true)
 }
 
@@ -283,11 +300,13 @@ pub async fn open_attachment(app: AppHandle, state: State<'_, AppState>, account
     }
     let path = std::env::temp_dir().join("mail-backup").join(uuid::Uuid::new_v4().to_string()).join(store::sanitize_component(&name));
     store::write_atomic(&path, &bytes)?;
+    mark_from_internet(&path);
     app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(other)
 }
 
 #[tauri::command]
 pub async fn reindex_account(state: State<'_, AppState>, account_id: String) -> Result<u64> {
+    ensure_idle(&state)?;
     let acc = state.account(&account_id)?;
     blocking(move || open_index(&acc)?.reindex(&acc.dir.join("mail"), &mut |_| {})).await
 }
@@ -381,5 +400,17 @@ mod tests {
         assert!(dirs_overlap(p("C:/a/b"), p("C:/a")));
         assert!(!dirs_overlap(p("C:/a/b"), p("C:/a/bc")));
         assert_eq!(dirs_overlap(p("C:/A/B"), p("C:/a/b")), cfg!(windows));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn attachment_gets_mark_of_the_web() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("a.docx");
+        std::fs::write(&f, b"x").unwrap();
+        mark_from_internet(&f);
+        let ads = std::fs::read_to_string(tmp.path().join("a.docx:Zone.Identifier")).unwrap();
+        assert!(ads.contains("ZoneId=3"));
+        assert_eq!(std::fs::read(&f).unwrap(), b"x");
     }
 }

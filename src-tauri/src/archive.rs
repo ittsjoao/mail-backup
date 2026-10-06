@@ -108,7 +108,7 @@ pub fn import(src: &Path, accounts_root: &Path, password: Option<&str>, mut new_
             let acc = &mut created[idx];
             if rest == "account.json" {
                 acc.manifest = Some(serde_json::from_reader(&mut entry).map_err(|e| AppError::CorruptArchive(e.to_string()))?);
-            } else if let Some(rel) = rest.strip_prefix("mail/") {
+            } else if let Some(rel) = rest.strip_prefix("mail/").filter(|r| r.ends_with(".eml")) {
                 let out = store::join_rel(&acc.dir.join("mail"), rel);
                 if let Some(parent) = out.parent() {
                     fs::create_dir_all(parent)?;
@@ -216,7 +216,7 @@ mod tests {
         let zip_path = tmp.path().join("evil.zip");
         {
             let mut w = ZipWriter::new(File::create(&zip_path).unwrap());
-            for name in ["../evil.eml", "acc/mail/../../evil2.eml", "acc/mail/INBOX/1-00001.eml"] {
+            for name in ["../evil.eml", "acc/mail/../../evil2.eml", "acc/mail/INBOX/1-00001.eml", "acc/mail/INBOX/run.exe"] {
                 w.start_file(name, SimpleFileOptions::default()).unwrap();
                 w.write_all(b"x").unwrap();
             }
@@ -229,6 +229,7 @@ mod tests {
         assert!(!tmp.path().join("evil.eml").exists());
         assert!(!out.join("evil2.eml").exists());
         assert!(!imported[0].dir.join("evil2.eml").exists());
+        assert!(!imported[0].dir.join("mail/INBOX/run.exe").exists()); // só .eml são extraídos
     }
 
     #[test]

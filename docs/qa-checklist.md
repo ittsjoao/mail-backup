@@ -34,6 +34,8 @@ Medidos em 2026-10-06, Windows 10, build de release.
 - [ ] **Spike dos links:** clicar num link dentro do e-mail abre o navegador padrão e não navega o app. Se falhar, avisar o desenvolvedor (fallback da spec: em `message.rs::wrap`, acrescentar ao `<style>` `a{pointer-events:none;color:inherit}`; links aparecem como texto). Não trocar o `sandbox` para liberar navegação.
 - [ ] Anexo `.pdf` → "Salvar como…" grava o arquivo; "Abrir" abre no leitor padrão. Anexo `.exe` não tem botão "Abrir".
 - [ ] "Abrir no programa de e-mail" abre o `.eml` no cliente padrão (ou pergunta qual app usar).
+- [ ] E-mail com `<a target="_self" href="https://...">` e com `<meta http-equiv="refresh" content="0;url=https://...">` não navega dentro do leitor (o iframe continua mostrando o e-mail).
+- [ ] Anexo `.docx` → "Abrir" abre no Word em Modo Protegido (arquivo marcado como vindo da internet).
 
 ## Backup real UOL (Task 10, Step 1)
 
@@ -44,6 +46,7 @@ Medidos em 2026-10-06, Windows 10, build de release.
 - [ ] Enviar um e-mail para a conta, rodar backup → "1 novas".
 - [ ] Durante um backup grande, desligar o Wi-Fi por ~10 s e religar → o backup continua ou a pasta aparece em "Falharam"; rodar de novo completa sem duplicar (conferir contagem no navegador vs. webmail).
 - [ ] "Cancelar" durante o backup → para entre lotes; rodar de novo completa.
+- [ ] Iniciar um backup, clicar "Abrir" numa conta e voltar com "← Contas" → "Cancelar" continua visível, o progresso segue e os botões Remover/Editar/Backup continuam desabilitados; o resultado aparece ao terminar.
 - [ ] Navegar a conta enquanto o backup roda → sem erro "database is locked".
 
 ## Exportar/importar real (Task 10, Step 2)

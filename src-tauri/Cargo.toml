@@ -1,8 +1,8 @@
 [package]
 name = "mail-backup"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Backup de e-mails IMAP"
+authors = []
 license = ""
 repository = ""
 edition = "2024"

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS messages (
   UNIQUE(folder_id, file)
 );
 CREATE INDEX IF NOT EXISTS messages_folder_date ON messages(folder_id, date DESC);
+CREATE INDEX IF NOT EXISTS messages_mid ON messages(folder_id, message_id);
 ";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -124,8 +125,9 @@ impl Index {
         let existed = path.exists();
         let mut conn = Connection::open(path)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let mut needs_reindex = !existed;
-        if existed && version != SCHEMA_VERSION {
+        // user_version e o marcador de "indice completo": so reindex() o grava
+        let needs_reindex = version != SCHEMA_VERSION;
+        if existed && version != 0 && version != SCHEMA_VERSION {
             drop(conn);
             for suffix in ["", "-wal", "-shm"] {
                 let mut p = path.as_os_str().to_owned();
@@ -133,12 +135,10 @@ impl Index {
                 let _ = std::fs::remove_file(PathBuf::from(p));
             }
             conn = Connection::open(path)?;
-            needs_reindex = true;
         }
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
         conn.execute_batch(SCHEMA)?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok((Index { conn }, needs_reindex))
     }
 
@@ -168,12 +168,24 @@ impl Index {
         Ok(FolderState { id: self.conn.last_insert_rowid(), imap_name: Some(imap_name.to_string()), path, uidvalidity: None, last_uid: 0 })
     }
 
-    fn folder_id_by_path(&self, path: &str) -> Result<i64> {
-        if let Some(f) = self.folder_where("path = ?1", path)? {
-            return Ok(f.id);
+    fn folder_id_by_path(conn: &Connection, path: &str) -> Result<i64> {
+        let found = conn.query_row("SELECT id FROM folders WHERE path = ?1", [path], |r| r.get(0)).optional()?;
+        if let Some(id) = found {
+            return Ok(id);
         }
-        self.conn.execute("INSERT INTO folders (path) VALUES (?1)", [path])?;
-        Ok(self.conn.last_insert_rowid())
+        conn.execute("INSERT INTO folders (path) VALUES (?1)", [path])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    fn insert_records(conn: &Connection, folder_id: i64, recs: &[MessageRecord]) -> Result<()> {
+        let mut st = conn.prepare_cached(
+            "INSERT OR REPLACE INTO messages (folder_id, uid, file, date, from_addr, from_name, subject, message_id, flags, size, has_attach)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        for r in recs {
+            st.execute(params![folder_id, r.uid, r.file, r.date, r.from_addr, r.from_name, r.subject, r.message_id, r.flags, r.size, r.has_attach])?;
+        }
+        Ok(())
     }
 
     pub fn reset_folder(&self, folder_id: i64, uidvalidity: u32) -> Result<()> {
@@ -195,15 +207,7 @@ impl Index {
 
     pub fn commit_batch(&mut self, folder_id: i64, recs: &[MessageRecord], last_uid: Option<u32>) -> Result<()> {
         let tx = self.conn.transaction()?;
-        {
-            let mut st = tx.prepare_cached(
-                "INSERT OR REPLACE INTO messages (folder_id, uid, file, date, from_addr, from_name, subject, message_id, flags, size, has_attach)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            )?;
-            for r in recs {
-                st.execute(params![folder_id, r.uid, r.file, r.date, r.from_addr, r.from_name, r.subject, r.message_id, r.flags, r.size, r.has_attach])?;
-            }
-        }
+        Self::insert_records(&tx, folder_id, recs)?;
         if let Some(uid) = last_uid {
             tx.execute("UPDATE folders SET last_uid = ?1 WHERE id = ?2", params![uid, folder_id])?;
         }
@@ -284,7 +288,8 @@ impl Index {
 
     // ponytail: flags não são recuperáveis do .eml; reindexação as deixa vazias
     pub fn reindex(&mut self, mail_root: &Path, progress: &mut dyn FnMut(u64)) -> Result<u64> {
-        self.conn.execute("DELETE FROM messages", [])?;
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM messages", [])?;
         let mut batch: Vec<MessageRecord> = Vec::new();
         let mut current: Option<(String, i64)> = None;
         let mut n = 0u64;
@@ -293,34 +298,37 @@ impl Index {
                 continue;
             }
             let Some((folder, name)) = rel.rsplit_once('/') else { continue };
+            let Ok(raw) = std::fs::read(&abs) else { continue };
             let folder_id = match &current {
                 Some((p, id)) if p == folder => *id,
                 _ => {
                     if let Some((_, id)) = current.take() {
-                        self.commit_batch(id, &batch, None)?;
+                        Self::insert_records(&tx, id, &batch)?;
                         batch.clear();
                     }
-                    let id = self.folder_id_by_path(folder)?;
+                    let id = Self::folder_id_by_path(&tx, folder)?;
                     current = Some((folder.to_string(), id));
                     id
                 }
             };
-            let raw = std::fs::read(&abs)?;
             batch.push(MessageRecord::from_raw(&raw, store::uid_from_name(name), rel.clone(), String::new(), None));
             n += 1;
             if batch.len() >= 500 {
-                self.commit_batch(folder_id, &batch, None)?;
+                Self::insert_records(&tx, folder_id, &batch)?;
                 batch.clear();
                 progress(n);
             }
         }
         if let Some((_, id)) = current {
-            self.commit_batch(id, &batch, None)?;
+            Self::insert_records(&tx, id, &batch)?;
         }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.commit()?;
         progress(n);
         Ok(n)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,16 +346,31 @@ mod tests {
     }
 
     #[test]
-    fn open_reports_reindex_for_new_and_old_schema() {
+    fn open_reports_reindex_until_a_reindex_completes() {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("index.sqlite");
+        let empty = tmp.path().join("mail");
         assert!(Index::open(&p).unwrap().1);
+        assert!(Index::open(&p).unwrap().1);
+        {
+            let (mut idx, _) = Index::open(&p).unwrap();
+            idx.reindex(&empty, &mut |_| {}).unwrap();
+        }
         assert!(!Index::open(&p).unwrap().1);
         {
             let (idx, _) = Index::open(&p).unwrap();
-            idx.conn.pragma_update(None, "user_version", 0).unwrap();
+            idx.folder_for_remote("INBOX", "INBOX").unwrap();
+            idx.conn.pragma_update(None, "user_version", 99).unwrap();
         }
-        assert!(Index::open(&p).unwrap().1);
+        let (idx, needs) = Index::open(&p).unwrap();
+        assert!(needs);
+        assert!(idx.folders_state().unwrap().is_empty());
+        idx.folder_for_remote("INBOX", "INBOX").unwrap();
+        idx.conn.pragma_update(None, "user_version", 0).unwrap();
+        drop(idx);
+        let (idx, needs) = Index::open(&p).unwrap();
+        assert!(needs);
+        assert_eq!(idx.folders_state().unwrap().len(), 1);
     }
 
     #[test]

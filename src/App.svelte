@@ -39,6 +39,7 @@
   :global(button.ghost) { background: transparent; border-color: transparent; color: var(--muted); }
   :global(button.ghost:hover:not(:disabled)) { background: var(--hover); color: var(--text); }
   :global(button.danger) { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  :global(button.danger:hover:not(:disabled)) { background: var(--bad); filter: brightness(.9); }
   :global(button.icon) { padding: 2px 8px; }
   :global(input) { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
   :global(input[type='checkbox']) { accent-color: var(--primary); }

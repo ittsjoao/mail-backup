@@ -58,3 +58,14 @@ Medidos em 2026-10-06, Windows 10, build de release.
 
 - [ ] Instalar o NSIS ou MSI e repetir o primeiro item de "Backup real UOL".
 - [ ] Anotar a RAM (`mail-backup.exe` + `msedgewebview2.exe` filhos) durante um backup na seção "Resultados do build".
+
+## Backup paralelo e tela de Contas (2026-10-08)
+
+- [ ] Com 6+ contas e "Contas simultâneas" = 5, "Backup de todas" mostra no máximo 5 cards "Em andamento"; os demais ficam "Na fila" e entram quando uma termina.
+- [ ] Limite = 1 → contas rodam uma de cada vez. Alterar o limite, fechar e reabrir o app → valor mantido. `config.json` antigo (sem `max_parallel`) abre com 5.
+- [ ] Uma conta com senha errada → card "Falhou" com "usuário ou senha inválidos"; as outras concluem normalmente.
+- [ ] "Cancelar" no meio → contas em andamento param no próximo lote; contas na fila vão para "Cancelado" sem começar; rodar de novo completa sem duplicar.
+- [ ] Durante o backup, clicar "Abrir" numa conta e voltar com "← Contas" → os cards continuam atualizando; o limite e os botões Backup/⋯ seguem desabilitados.
+- [ ] Windows em modo escuro → Contas, Navegador, Lista e Leitor legíveis; o corpo do e-mail continua com fundo branco.
+- [ ] Menu ⋯ abre junto ao botão (não no centro da tela); Esc fecha modais e menu.
+- [ ] RAM durante backup de 5 contas simultâneas: _(anotar)_

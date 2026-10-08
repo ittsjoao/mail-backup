@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -53,6 +53,28 @@ pub struct BackupResult {
     pub account_id: String,
     pub report: Option<SyncReport>,
     pub error: Option<AppError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupStatus {
+    pub account_id: String,
+    pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_messages: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn final_status(id: &str, outcome: &Result<SyncReport>) -> BackupStatus {
+    match outcome {
+        Ok(r) => BackupStatus {
+            account_id: id.to_string(),
+            state: if r.cancelled { "cancelled" } else { "done" },
+            new_messages: Some(r.new_messages),
+            error: None,
+        },
+        Err(e) => BackupStatus { account_id: id.to_string(), state: "failed", new_messages: None, error: Some(e.to_string()) },
+    }
 }
 
 fn now() -> i64 {
@@ -221,18 +243,19 @@ where
     out.into_iter().map(|(_, t)| t).collect()
 }
 
-async fn backup_one(app: &AppHandle, state: &AppState, id: &str) -> Result<SyncReport> {
-    let acc = state.account(id)?;
+async fn backup_one(app: AppHandle, id: String) -> Result<SyncReport> {
+    let state = app.state::<AppState>();
+    let acc = state.account(&id)?;
     if !acc.has_credentials {
         return Err(other("conta sem credenciais (somente leitura)"));
     }
-    let pw = config::get_password(id)?;
+    let pw = config::get_password(&id)?;
     let mut index = open_index(&acc)?;
     let mail_root = acc.dir.join("mail");
     let progress = |p: Progress| {
         let _ = app.emit("backup://progress", p);
     };
-    let ctx = SyncCtx { account_id: id, mail_root: &mail_root, cancel: &state.cancel, progress: &progress };
+    let ctx = SyncCtx { account_id: &id, mail_root: &mail_root, cancel: &state.cancel, progress: &progress };
     let (host, user, pass, port) = (acc.host.as_str(), acc.username.as_str(), pw.as_str(), acc.port);
     imap_sync::sync_account(move || imap_sync::connect_tls(host, port, user, pass), &ctx, &mut index).await
 }
@@ -243,25 +266,37 @@ pub async fn run_backup(app: AppHandle, state: State<'_, AppState>, ids: Vec<Str
         return Err(other("já existe um backup em andamento"));
     }
     state.cancel.store(false, Ordering::SeqCst);
-    let mut results = Vec::new();
-    for id in ids {
-        if state.cancel.load(Ordering::SeqCst) {
-            break;
+    let limit = state.config.lock().unwrap().max_parallel as usize;
+    let st: &AppState = &state;
+    let results = run_limited(ids, limit, |id| {
+        let app = app.clone();
+        async move {
+            // cancelado enquanto esperava vaga: não começa e não grava last_run
+            let outcome = if st.cancel.load(Ordering::SeqCst) {
+                Ok(SyncReport { cancelled: true, ..Default::default() })
+            } else {
+                let running = BackupStatus { account_id: id.clone(), state: "running", new_messages: None, error: None };
+                let _ = app.emit("backup://status", running);
+                // task própria: parse, disco e SQLite de uma conta não travam as outras
+                let outcome = tauri::async_runtime::spawn(backup_one(app.clone(), id.clone())).await.unwrap_or_else(|e| Err(other(e)));
+                let last = match &outcome {
+                    Ok(r) => LastRun { at: now(), new_messages: r.new_messages, failed_folders: r.failed_folders.clone(), error: None },
+                    Err(e) => LastRun { at: now(), new_messages: 0, failed_folders: vec![], error: Some(e.to_string()) },
+                };
+                let _ = st.update(|c| {
+                    c.get_mut(&id)?.last_run = Some(last);
+                    Ok(())
+                });
+                outcome
+            };
+            let _ = app.emit("backup://status", final_status(&id, &outcome));
+            match outcome {
+                Ok(r) => BackupResult { account_id: id, report: Some(r), error: None },
+                Err(e) => BackupResult { account_id: id, report: None, error: Some(e) },
+            }
         }
-        let outcome = backup_one(&app, &state, &id).await;
-        let last = match &outcome {
-            Ok(r) => LastRun { at: now(), new_messages: r.new_messages, failed_folders: r.failed_folders.clone(), error: None },
-            Err(e) => LastRun { at: now(), new_messages: 0, failed_folders: vec![], error: Some(e.to_string()) },
-        };
-        let _ = state.update(|c| {
-            c.get_mut(&id)?.last_run = Some(last);
-            Ok(())
-        });
-        results.push(match outcome {
-            Ok(r) => BackupResult { account_id: id, report: Some(r), error: None },
-            Err(e) => BackupResult { account_id: id, report: None, error: Some(e) },
-        });
-    }
+    })
+    .await;
     state.running.store(false, Ordering::SeqCst);
     Ok(results)
 }
@@ -427,6 +462,20 @@ pub async fn import_archive(state: State<'_, AppState>, path: String, password: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_status_maps_outcome() {
+        let ok = final_status("a", &Ok(SyncReport { new_messages: 3, ..Default::default() }));
+        assert_eq!((ok.state, ok.new_messages, ok.error.as_deref()), ("done", Some(3), None));
+        let c = final_status("a", &Ok(SyncReport { cancelled: true, ..Default::default() }));
+        assert_eq!((c.state, c.new_messages), ("cancelled", Some(0)));
+        let f = final_status("a", &Err(AppError::AuthFailed));
+        assert_eq!((f.state, f.new_messages, f.error.as_deref()), ("failed", None, Some("usuário ou senha inválidos")));
+        assert_eq!(
+            serde_json::to_value(&f).unwrap(),
+            serde_json::json!({"account_id": "a", "state": "failed", "error": "usuário ou senha inválidos"})
+        );
+    }
 
     #[test]
     fn overlap_cases() {

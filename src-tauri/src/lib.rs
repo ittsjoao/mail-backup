@@ -44,6 +44,8 @@ pub fn run() {
             commands::pick_folder,
             commands::run_backup,
             commands::cancel_backup,
+            commands::get_max_parallel,
+            commands::set_max_parallel,
             commands::list_folders,
             commands::list_messages,
             commands::get_message,

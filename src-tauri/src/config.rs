@@ -26,9 +26,28 @@ pub struct Account {
     pub last_run: Option<LastRun>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+pub const DEFAULT_MAX_PARALLEL: u32 = 5;
+
+fn default_max_parallel() -> u32 {
+    DEFAULT_MAX_PARALLEL
+}
+
+/// Quantas contas fazem backup ao mesmo tempo; teto evita bloqueio por excesso de conexões no provedor.
+pub fn check_max_parallel(n: u32) -> Result<u32> {
+    if (1..=20).contains(&n) { Ok(n) } else { Err(AppError::Other("limite deve ficar entre 1 e 20".into())) }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub accounts: Vec<Account>,
+    #[serde(default = "default_max_parallel")]
+    pub max_parallel: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config { accounts: Vec::new(), max_parallel: DEFAULT_MAX_PARALLEL }
+    }
 }
 
 impl Config {
@@ -114,5 +133,23 @@ mod tests {
         delete_password(&id).unwrap();
         assert!(get_password(&id).is_err());
         delete_password(&id).unwrap(); // apagar o que não existe não é erro
+    }
+
+    #[test]
+    fn max_parallel_defaults_to_5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("config.json");
+        std::fs::write(&p, br#"{"accounts":[]}"#).unwrap();
+        assert_eq!(Config::load(&p).unwrap().max_parallel, 5);
+        assert_eq!(Config::default().max_parallel, 5);
+    }
+
+    #[test]
+    fn max_parallel_range() {
+        assert!(check_max_parallel(0).is_err());
+        assert!(check_max_parallel(21).is_err());
+        assert_eq!(check_max_parallel(1).unwrap(), 1);
+        assert_eq!(check_max_parallel(20).unwrap(), 20);
+        assert_eq!(check_max_parallel(0).unwrap_err().to_string(), "limite deve ficar entre 1 e 20");
     }
 }

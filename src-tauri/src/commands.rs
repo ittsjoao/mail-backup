@@ -252,6 +252,21 @@ pub async fn cancel_backup(state: State<'_, AppState>) -> Result<()> {
 }
 
 #[tauri::command]
+pub async fn get_max_parallel(state: State<'_, AppState>) -> Result<u32> {
+    Ok(state.config.lock().unwrap().max_parallel)
+}
+
+#[tauri::command]
+pub async fn set_max_parallel(state: State<'_, AppState>, n: u32) -> Result<u32> {
+    ensure_idle(&state)?;
+    let n = config::check_max_parallel(n)?;
+    state.update(|c| {
+        c.max_parallel = n;
+        Ok(n)
+    })
+}
+
+#[tauri::command]
 pub async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<FolderInfo>> {
     let acc = state.account(&account_id)?;
     blocking(move || open_index(&acc)?.list_folders()).await

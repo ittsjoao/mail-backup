@@ -261,12 +261,14 @@ async fn backup_one(app: AppHandle, id: String) -> Result<SyncReport> {
 }
 
 #[tauri::command]
-pub async fn run_backup(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<Vec<BackupResult>> {
+pub async fn run_backup(app: AppHandle, state: State<'_, AppState>, mut ids: Vec<String>) -> Result<Vec<BackupResult>> {
     if state.running.swap(true, Ordering::SeqCst) {
         return Err(other("já existe um backup em andamento"));
     }
     state.cancel.store(false, Ordering::SeqCst);
     let limit = state.config.lock().unwrap().max_parallel as usize;
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|i| seen.insert(i.clone()));
     let st: &AppState = &state;
     let results = run_limited(ids, limit, |id| {
         let app = app.clone();
@@ -278,6 +280,7 @@ pub async fn run_backup(app: AppHandle, state: State<'_, AppState>, ids: Vec<Str
                 let running = BackupStatus { account_id: id.clone(), state: "running", new_messages: None, error: None };
                 let _ = app.emit("backup://status", running);
                 // task própria: parse, disco e SQLite de uma conta não travam as outras
+                // ponytail: SQLite e gravação de .eml rodam nas threads do runtime; com limite alto em poucos núcleos podem atrasar outros comandos — mover para spawn_blocking se navegar durante o backup travar
                 let outcome = tauri::async_runtime::spawn(backup_one(app.clone(), id.clone())).await.unwrap_or_else(|e| Err(other(e)));
                 let last = match &outcome {
                     Ok(r) => LastRun { at: now(), new_messages: r.new_messages, failed_folders: r.failed_folders.clone(), error: None },

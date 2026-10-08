@@ -2,6 +2,7 @@
   import { api, errMsg, modal } from './api.js'
 
   let { initial, onsaved, onclose } = $props()
+  // svelte-ignore state_referenced_locally
   let form = $state({ ...initial })
   let dlg
   let error = $state('')

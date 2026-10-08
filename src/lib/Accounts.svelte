@@ -44,7 +44,7 @@
   async function backup(ids) {
     running = true; cancelling = false; alert = null
     status = Object.fromEntries(ids.map((id) => [id, { state: 'queued' }]))
-    try { await api.runBackup(ids) } catch (e) { fail(e) } finally { running = false; refresh() }
+    try { await api.runBackup(ids) } catch (e) { status = {}; fail(e) } finally { running = false; refresh() }
   }
 
   async function cancel() {

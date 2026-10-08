@@ -38,7 +38,7 @@
     {:else if status?.state === 'queued'}
       <div class="muted">Aguardando uma vaga…</div>
     {:else if status?.state === 'done'}
-      <div>+{n(status.new_messages)} novas</div>
+      <div>+{n(status.new_messages)} novas{#if !running && account.last_run}<span class="muted"> · {fmtDate(account.last_run.at)}</span>{/if}</div>
     {:else if status?.state === 'cancelled'}
       <div class="muted">Cancelado · +{n(status.new_messages)} novas</div>
     {:else if status?.state === 'failed'}

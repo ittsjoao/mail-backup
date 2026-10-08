@@ -7,7 +7,7 @@
 
 <header>
   <h1>Mail Backup</h1>
-  {#if account}<button onclick={() => (account = null)}>← Contas</button> <span>{account.name}</span>{/if}
+  {#if account}<button class="ghost" onclick={() => (account = null)}>← Contas</button> <span class="muted">{account.name}</span>{/if}
 </header>
 
 <!-- Contas fica montada (só oculta) para não perder o estado de um backup em andamento -->
@@ -15,18 +15,59 @@
 {#if account}<Browser {account} />{/if}
 
 <style>
-  :global(body) { margin: 0; font: 14px system-ui, sans-serif; color: #1d1d1f; background: #fafafa; }
-  :global(button) { padding: 4px 10px; cursor: pointer; }
-  :global(input) { padding: 4px 6px; }
-  :global(.err) { color: #b00020; }
-  :global(.info) { color: #1b5e20; }
+  :global(:root) {
+    --bg: #f4f4f5; --surface: #fff; --border: #e4e4e7; --hover: #f4f4f5; --text: #18181b; --muted: #71717a;
+    --primary: #4f46e5; --primary-hover: #4338ca; --primary-soft: #e0e7ff; --primary-soft-text: #3730a3;
+    --ok-soft: #dcfce7; --ok-text: #166534; --bad: #dc2626; --bad-soft: #fee2e2; --bad-text: #991b1b;
+    --shadow: 0 1px 2px rgb(0 0 0 / .05); --shadow-lg: 0 12px 32px rgb(0 0 0 / .18);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root) {
+      --bg: #09090b; --surface: #18181b; --border: #27272a; --hover: #27272a; --text: #fafafa; --muted: #a1a1aa;
+      --primary: #6366f1; --primary-hover: #4f46e5; --primary-soft: #1e1b4b; --primary-soft-text: #c7d2fe;
+      --ok-soft: #052e16; --ok-text: #86efac; --bad-soft: #450a0a; --bad-text: #fca5a5;
+      --shadow: 0 1px 2px rgb(0 0 0 / .4); --shadow-lg: 0 12px 32px rgb(0 0 0 / .6);
+    }
+  }
+  :global(body) { margin: 0; font: 14px/1.4 system-ui, 'Segoe UI', sans-serif; color: var(--text); background: var(--bg); }
+  :global(button) { font: inherit; padding: 6px 12px; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+  :global(button:hover:not(:disabled)) { background: var(--hover); }
+  :global(button:disabled) { opacity: .5; cursor: default; }
+  :global(button.primary) { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  :global(button.primary:hover:not(:disabled)) { background: var(--primary-hover); }
+  :global(button.ghost) { background: transparent; border-color: transparent; color: var(--muted); }
+  :global(button.ghost:hover:not(:disabled)) { background: var(--hover); color: var(--text); }
+  :global(button.danger) { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  :global(button.icon) { padding: 2px 8px; }
+  :global(input) { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+  :global(input[type='checkbox']) { accent-color: var(--primary); }
+  :global(button:focus-visible), :global(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 1px; }
+  :global(.muted) { color: var(--muted); }
+  :global(.spacer) { flex: 1; }
+  :global(.err) { color: var(--bad-text); }
+  :global(.info) { color: var(--ok-text); }
   :global(.inline) { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-  :global(.card) { display: grid; gap: 6px; max-width: 480px; padding: 12px; background: #fff; border: 1px solid #ddd; margin: 8px 0; }
+  :global(.chip) { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--hover); color: var(--muted); border: 1px solid var(--border); }
+  :global(.chip.run) { background: var(--primary-soft); color: var(--primary-soft-text); border-color: transparent; }
+  :global(.chip.ok) { background: var(--ok-soft); color: var(--ok-text); border-color: transparent; }
+  :global(.chip.bad) { background: var(--bad-soft); color: var(--bad-text); border-color: transparent; }
+  :global(.alert) { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; }
+  :global(.alert.ok) { background: var(--ok-soft); color: var(--ok-text); }
+  :global(.alert.bad) { background: var(--bad-soft); color: var(--bad-text); }
+  :global(.alert button) { margin-left: auto; color: inherit; }
+  :global(dialog) { border: 1px solid var(--border); border-radius: 14px; padding: 20px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); width: min(560px, calc(100vw - 32px)); box-sizing: border-box; }
+  :global(dialog::backdrop) { background: rgb(0 0 0 / .45); }
+  :global(dialog h2) { font-size: 16px; margin: 0 0 14px; }
+  :global(dialog footer) { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+  /* usados só pela tela de Contas antiga; saem na Task 7 */
+  :global(.card) { display: grid; gap: 6px; max-width: 480px; padding: 12px; background: var(--surface); border: 1px solid var(--border); margin: 8px 0; }
   :global(.card label) { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; }
   :global(table) { width: 100%; border-collapse: collapse; }
-  :global(td), :global(th) { padding: 6px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+  :global(td), :global(th) { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
   :global(.actions) { white-space: nowrap; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; background: #fff; }
-  header h1 { font-size: 16px; margin: 0; }
   :global(.accounts) { padding: 12px; }
+  /* altura fixa: Browser.svelte calcula 100vh - 45px */
+  header { display: flex; gap: 12px; align-items: center; height: 45px; box-sizing: border-box; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
 </style>

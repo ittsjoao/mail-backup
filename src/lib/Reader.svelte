@@ -61,7 +61,7 @@
 
 <style>
   .reader { display: flex; flex-direction: column; height: 100%; }
-  .head { padding: 10px 12px; border-bottom: 1px solid #ddd; background: #fff; }
+  .head { padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .head h2 { font-size: 16px; margin: 0 0 6px; }
   .att { margin: 6px 0 0; padding-left: 18px; }
   iframe { flex: 1; border: 0; width: 100%; background: #fff; }

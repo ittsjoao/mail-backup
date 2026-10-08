@@ -64,14 +64,14 @@
 
 <style>
   .browser { display: grid; grid-template-columns: 220px 380px 1fr; height: calc(100vh - 45px); }
-  aside { overflow-y: auto; border-right: 1px solid #ddd; display: flex; flex-direction: column; background: #f3f3f3; }
+  aside { overflow-y: auto; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg); }
   aside button { text-align: left; border: 0; background: none; padding: 6px 10px; display: flex; justify-content: space-between; }
-  aside button.sel { background: #dde7f3; }
-  .reindex { margin-top: auto; color: #555; }
-  section { display: flex; flex-direction: column; border-right: 1px solid #ddd; min-height: 0; }
+  aside button.sel { background: var(--primary-soft); }
+  .reindex { margin-top: auto; color: var(--muted); }
+  section { display: flex; flex-direction: column; border-right: 1px solid var(--border); min-height: 0; }
   .search { margin: 8px 8px 4px; }
   .dates { display: flex; gap: 8px; margin: 0 8px 8px; font-size: 12px; }
   .listwrap { flex: 1; min-height: 0; }
   main { min-width: 0; min-height: 0; }
-  .empty { padding: 16px; color: #888; }
+  .empty { padding: 16px; color: var(--muted); }
 </style>

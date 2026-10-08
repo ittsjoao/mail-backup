@@ -71,9 +71,9 @@
 <style>
   .list { height: 100%; overflow-y: auto; position: relative; }
   .spacer { position: relative; }
-  .row { position: absolute; left: 0; right: 0; display: grid; gap: 2px; text-align: left; border: 0; border-bottom: 1px solid #eee; background: #fff; padding: 6px 10px; }
-  .row.sel { background: #e3f2fd; }
+  .row { position: absolute; left: 0; right: 0; display: grid; gap: 2px; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--surface); padding: 6px 10px; }
+  .row.sel { background: var(--primary-soft); }
   .top { display: flex; justify-content: space-between; gap: 8px; overflow: hidden; white-space: nowrap; }
-  .subj { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #555; }
-  .empty { padding: 12px; color: #888; }
+  .subj { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+  .empty { padding: 12px; color: var(--muted); }
 </style>

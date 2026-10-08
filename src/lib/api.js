@@ -20,7 +20,13 @@ export const api = {
   pickArchive: () => invoke('pick_archive'),
   importArchive: (path, password) => invoke('import_archive', { path, password }),
   onProgress: (cb) => listen('backup://progress', (e) => cb(e.payload)),
+  onStatus: (cb) => listen('backup://status', (e) => cb(e.payload)),
+  getMaxParallel: () => invoke('get_max_parallel'),
+  setMaxParallel: (n) => invoke('set_max_parallel', { n }),
 }
 
 export const errMsg = (e) => (e && e.message) || String(e)
 export const fmtDate = (ts) => (ts ? new Date(ts * 1000).toLocaleString('pt-BR') : '')
+
+// use:modal — abre o <dialog> como modal assim que entra na tela
+export const modal = (node) => { node.showModal() }

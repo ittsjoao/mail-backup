@@ -61,13 +61,6 @@
   :global(dialog::backdrop) { background: rgb(0 0 0 / .45); }
   :global(dialog h2) { font-size: 16px; margin: 0 0 14px; }
   :global(dialog footer) { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
-  /* usados só pela tela de Contas antiga; saem na Task 7 */
-  :global(.card) { display: grid; gap: 6px; max-width: 480px; padding: 12px; background: var(--surface); border: 1px solid var(--border); margin: 8px 0; }
-  :global(.card label) { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; }
-  :global(table) { width: 100%; border-collapse: collapse; }
-  :global(td), :global(th) { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-  :global(.actions) { white-space: nowrap; }
-  :global(.accounts) { padding: 12px; }
   /* altura fixa: Browser.svelte calcula 100vh - 45px */
   header { display: flex; gap: 12px; align-items: center; height: 45px; box-sizing: border-box; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
   header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: -.01em; }

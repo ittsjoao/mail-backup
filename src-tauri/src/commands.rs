@@ -5,7 +5,9 @@ use crate::imap_sync::{self, Progress, SyncCtx, SyncReport};
 use crate::index::{FolderInfo, Index, MessagePage, Query};
 use crate::message::{self, MessageView};
 use crate::store;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -198,6 +200,25 @@ pub async fn test_connection(input: AccountInput) -> Result<()> {
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle) -> Result<Option<String>> {
     Ok(app.dialog().file().blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Roda `f` para cada id com no máximo `limit` ao mesmo tempo; resultados na ordem de `ids`.
+/// `buffer_unordered` (e não `buffered`) para uma conta lenta não segurar as vagas das outras.
+async fn run_limited<T, F, Fut>(ids: Vec<String>, limit: usize, f: F) -> Vec<T>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = T>,
+{
+    let mut out: Vec<(usize, T)> = futures::stream::iter(ids.into_iter().enumerate())
+        .map(|(i, id)| {
+            let fut = f(id);
+            async move { (i, fut.await) }
+        })
+        .buffer_unordered(limit.max(1))
+        .collect()
+        .await;
+    out.sort_by_key(|(i, _)| *i);
+    out.into_iter().map(|(_, t)| t).collect()
 }
 
 async fn backup_one(app: &AppHandle, state: &AppState, id: &str) -> Result<SyncReport> {
@@ -427,5 +448,28 @@ mod tests {
         let ads = std::fs::read_to_string(tmp.path().join("a.docx:Zone.Identifier")).unwrap();
         assert!(ads.contains("ZoneId=3"));
         assert_eq!(std::fs::read(&f).unwrap(), b"x");
+    }
+
+    #[tokio::test]
+    async fn run_limited_caps_concurrency_and_keeps_order() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+        let (active, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let ids: Vec<String> = (0..12).map(|i| i.to_string()).collect();
+        let out = run_limited(ids.clone(), 3, |id| {
+            let (active, peak) = (&active, &peak);
+            async move {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                // o primeiro é o mais lento: com fila ordenada ele seguraria as outras vagas
+                let n: u64 = id.parse().unwrap();
+                tokio::time::sleep(Duration::from_millis(5 * (12 - n))).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                id
+            }
+        })
+        .await;
+        assert_eq!(out, ids);
+        assert_eq!(peak.load(Ordering::SeqCst), 3);
     }
 }
